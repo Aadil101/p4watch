@@ -26,12 +26,13 @@ func main() {
 		client   = flag.String("p4client", "bench_ws", "P4CLIENT (workspace name)")
 		p4bin    = flag.String("p4bin", "p4", "path to the p4 executable")
 		addr     = flag.String("addr", "127.0.0.1:7778", "status endpoint address")
-		interval = flag.Duration("interval", 15*time.Second, "re-anchor poll interval")
+		backstop = flag.Duration("backstop", 2*time.Minute, "periodic re-anchor interval (missed-event safety net)")
+		debounce = flag.Duration("debounce", 500*time.Millisecond, "quiet window after a file event before re-anchoring")
 	)
 	flag.Parse()
 
 	c := &p4.Client{Port: *port, User: *user, Client: *client, Root: *root, Bin: *p4bin}
-	srv := daemon.New(c, *interval)
+	srv := daemon.New(c, daemon.Config{Backstop: *backstop, Debounce: *debounce})
 	go srv.Run(context.Background())
 
 	mux := http.NewServeMux()
