@@ -61,6 +61,54 @@ func (s *state) snapshot() (r reconcile.Result, ok bool, lastErr error, age time
 	return s.result, s.ok, s.lastErr, age
 }
 
+// handleSummary is the hot path. O(1): a cached count plus the metadata a caller
+// needs to decide clean vs dirty vs unknown. This is what a shell prompt calls
+// on every render; it never serializes the file list. The JSON shape here is a
+// contract callers depend on, so it is tested directly.
+func (s *state) handleSummary(w http.ResponseWriter, r *http.Request) {
+	res, ok, lastErr, age := s.snapshot()
+	body := map[string]any{
+		"known":   ok, // false => never reconciled; render as unknown, not clean
+		"count":   res.Count(),
+		"age_ms":  age.Milliseconds(),
+		"depot":   res.DepotFiles,
+		"walked":  res.Walked,
+		"hashed":  res.Hashed,
+		"took_ms": res.Took.Milliseconds(),
+		"stale":   lastErr != nil, // last poll errored; cached answer is aging
+	}
+	if lastErr != nil {
+		body["error"] = lastErr.Error()
+	}
+	writeJSON(w, body)
+}
+
+// handleStatus is the full dirty list. O(changes) in bytes, so it is NOT the
+// prompt's endpoint; it is for a human or a review UI that wants the paths.
+func (s *state) handleStatus(w http.ResponseWriter, r *http.Request) {
+	res, ok, lastErr, age := s.snapshot()
+	changes := make([]map[string]string, 0, len(res.Changes))
+	for _, ch := range res.Changes {
+		changes = append(changes, map[string]string{"path": ch.Path, "kind": ch.Kind.String()})
+	}
+	body := map[string]any{
+		"known":   ok,
+		"count":   len(changes),
+		"age_ms":  age.Milliseconds(),
+		"changes": changes,
+	}
+	if lastErr != nil {
+		body["error"] = lastErr.Error()
+	}
+	writeJSON(w, body)
+}
+
+// handleHealthz is liveness only. It says nothing about the workspace.
+func (s *state) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	_, ok, _, _ := s.snapshot()
+	writeJSON(w, map[string]any{"up": true, "reconciled": ok})
+}
+
 func main() {
 	var (
 		root     = flag.String("root", `C:\p4bench\ws`, "local workspace root")
@@ -102,52 +150,9 @@ func main() {
 		}
 	}()
 
-	// /summary: the hot path. O(1): a cached count and the metadata a caller
-	// needs to decide clean vs dirty vs unknown. This is what a shell prompt
-	// calls on every render; it never serializes the file list.
-	http.HandleFunc("/summary", func(w http.ResponseWriter, r *http.Request) {
-		res, ok, lastErr, age := st.snapshot()
-		body := map[string]any{
-			"known":   ok, // false => never reconciled; render as unknown, not clean
-			"count":   res.Count(),
-			"age_ms":  age.Milliseconds(),
-			"depot":   res.DepotFiles,
-			"walked":  res.Walked,
-			"hashed":  res.Hashed,
-			"took_ms": res.Took.Milliseconds(),
-			"stale":   lastErr != nil, // last poll errored; cached answer is aging
-		}
-		if lastErr != nil {
-			body["error"] = lastErr.Error()
-		}
-		writeJSON(w, body)
-	})
-
-	// /status: the full dirty list. O(changes) in bytes, so it is NOT the
-	// prompt's endpoint; it is for a human or a review UI that wants the paths.
-	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		res, ok, lastErr, age := st.snapshot()
-		changes := make([]map[string]string, 0, len(res.Changes))
-		for _, ch := range res.Changes {
-			changes = append(changes, map[string]string{"path": ch.Path, "kind": ch.Kind.String()})
-		}
-		body := map[string]any{
-			"known":   ok,
-			"count":   len(changes),
-			"age_ms":  age.Milliseconds(),
-			"changes": changes,
-		}
-		if lastErr != nil {
-			body["error"] = lastErr.Error()
-		}
-		writeJSON(w, body)
-	})
-
-	// /healthz: liveness only. Says nothing about the workspace.
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		_, ok, _, _ := st.snapshot()
-		writeJSON(w, map[string]any{"up": true, "reconciled": ok})
-	})
+	http.HandleFunc("/summary", st.handleSummary)
+	http.HandleFunc("/status", st.handleStatus)
+	http.HandleFunc("/healthz", st.handleHealthz)
 
 	log.Printf("p4watchd watching %s via %s", *root, *port)
 	log.Printf("endpoints: http://%s/summary  /status  /healthz", *addr)

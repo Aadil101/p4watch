@@ -72,17 +72,23 @@ func (r Result) Count() int { return len(r.Changes) }
 // timer; making it incremental via filesystem events is a later step. Building
 // the correct pass first means every intermediate state is a working tool.
 func Run(ctx context.Context, c *p4.Client) (Result, error) {
-	start := time.Now()
-
 	depot, err := c.DepotState(ctx)
 	if err != nil {
 		return Result{}, err
 	}
+	return diff(ctx, c.Root, depot)
+}
+
+// diff is the pure reconcile core: given the server's view (depot) and a root to
+// walk, it produces the dirty set. It shells out to nothing, so it is the seam
+// the tests drive directly with a hand-built depot map and a temp tree.
+func diff(ctx context.Context, root string, depot map[string]p4.DepotFile) (Result, error) {
+	start := time.Now()
 
 	res := Result{DepotFiles: len(depot)}
 	seen := make(map[string]struct{}, len(depot))
 
-	walkErr := filepath.WalkDir(c.Root, func(path string, d os.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // unreadable entry: skip it, don't abort the whole pass
 		}
