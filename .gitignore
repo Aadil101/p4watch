@@ -1,0 +1,15 @@
+# Built binaries
+*.exe
+/p4watchd
+/p4watch
+
+# Go
+/vendor/
+*.test
+*.out
+
+# Editor / OS
+.idea/
+.vscode/
+*~
+.DS_Store
