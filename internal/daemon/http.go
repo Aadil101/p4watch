@@ -58,7 +58,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 // handleHealthz is liveness only. It says nothing about the workspace.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_, ok, _, _ := s.snapshot()
-	writeJSON(w, map[string]any{"up": true, "reconciled": ok})
+	writeJSON(w, map[string]any{"up": true, "known": ok})
 }
 
 func writeJSON(w http.ResponseWriter, body any) {
